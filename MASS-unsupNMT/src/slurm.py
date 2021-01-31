@@ -121,10 +121,10 @@ def init_distributed_mode(params):
         assert params.master_port == -1
         params.n_nodes = 1
         params.node_id = 0
-        params.local_rank = 0
-        params.global_rank = 0
-        params.world_size = 1
-        params.n_gpu_per_node = 1
+        params.local_rank = params.gpu
+        params.global_rank = 7
+        params.world_size = 8
+        params.n_gpu_per_node = 8
 
     # sanity checks
     assert params.n_nodes >= 1
@@ -133,9 +133,9 @@ def init_distributed_mode(params):
     assert params.world_size == params.n_nodes * params.n_gpu_per_node
 
     # define whether this is the master process / if we are in distributed mode
-    params.is_master = params.node_id == 0 and params.local_rank == 0
-    params.multi_node = params.n_nodes > 1
-    params.multi_gpu = params.world_size > 1
+    params.is_master = True#params.node_id == 0 and params.local_rank == 0
+    params.multi_node = False#params.n_nodes > 1
+    params.multi_gpu = False#params.world_size > 1
 
     # summary
     PREFIX = "%i - " % params.global_rank

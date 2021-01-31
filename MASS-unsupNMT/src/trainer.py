@@ -15,10 +15,12 @@ import random
 from logging import getLogger
 from collections import OrderedDict
 import numpy as np
+import pandas as pd
 import torch
 from torch.nn import functional as F
 from torch.nn.utils import clip_grad_norm_
 from apex.fp16_utils import FP16_Optimizer
+import pdb
 
 from .utils import get_optimizer, to_cuda, concat_batches
 from .utils import parse_lambda_config, update_lambdas
@@ -424,7 +426,7 @@ class Trainer(object):
 
         torch.save(data, path)
 
-    def save_checkpoint(self):
+    def save_checkpoint(self,suffix=''):
         """
         Checkpoint the experiment.
         """
@@ -447,7 +449,7 @@ class Trainer(object):
         data['dico_counts'] = self.data['dico'].counts
         data['params'] = {k: v for k, v in self.params.__dict__.items()}
 
-        checkpoint_path = os.path.join(self.params.dump_path, 'checkpoint.pth')
+        checkpoint_path = os.path.join(self.params.dump_path, 'checkpoint{}.pth'.format(suffix))
         logger.info("Saving checkpoint to %s ..." % checkpoint_path)
         torch.save(data, checkpoint_path)
 
@@ -497,6 +499,15 @@ class Trainer(object):
                 self.best_metrics[metric] = scores[metric]
                 logger.info('New best score for %s: %.6f' % (metric, scores[metric]))
                 self.save_model('best-%s' % metric)
+                self.save_checkpoint('-best-%s' % metric)
+                # logger.info('Saving new result file')
+                # labels = np.loadtxt(os.path.join(self.params.data_path, 'labels'))
+                # candidates = np.loadtxt(os.path.join(self.params.data_path, '%s.%s' % ('test', self.params.mass_steps[0])),
+                #                         dtype='S', delimiter='\n')
+                # targets = [x.split()[0] for x in candidates]
+                # preds = scores['%s_%s_sentence_likelihood' % ('test', self.params.mass_steps[0])]
+                # results = pd.DataFrame({'label': labels, 'target': targets, 'pred': preds})
+                # results.to_pickle(os.path.join(self.params.dump_path, 'best-prediction.pkl'))
 
     def end_epoch(self, scores):
         """
@@ -839,7 +850,60 @@ class EncDecTrainer(Trainer):
         pred_mask = y != self.params.pad_index
         y = y.masked_select(pred_mask)
         return x1, l1, x2, l2, y, pred_mask, pos
-    
+
+    def restricted_mask_sent2(self, x, l, span_len=100000):
+        """ Restricted mask sents
+            if span_len is equal to 1, it can be viewed as
+            discrete mask;
+            if span_len -> inf, it can be viewed as
+            pure sentence mask
+        """
+        if span_len <= 0:
+            span_len = 1
+        max_len = 0
+        positions, inputs, targets, outputs, = [], [], [], []
+
+        len2=[]
+        start=[]
+        for i in range(l.size(0)):
+            p = np.random.random()
+            if p > 0.5:
+                mask_len = l[0].item() - 2
+                start.append(2)
+            else:
+                mask_len = 1
+                start.append(1)
+            len2.append(mask_len)
+        #logger.info("mask length: %s, start pos:%s" % (str(len2),str(start)))
+
+        for i in range(l.size(0)):
+            words = np.array(x[:l[i], i].tolist())
+            pos_i = np.arange(start[i],start[i]+len2[i])
+            output_i = words[pos_i].copy()
+            target_i = words[pos_i - 1].copy()
+            words[pos_i] = self.mask_word(words[pos_i])
+            #pdb.set_trace()
+            inputs.append(words)
+            targets.append(target_i)
+            outputs.append(output_i)
+            positions.append(pos_i - 1)
+
+        x1 = torch.LongTensor(max(l), l.size(0)).fill_(self.params.pad_index)
+        x2 = torch.LongTensor(max(len2), l.size(0)).fill_(self.params.pad_index)
+        y = torch.LongTensor(max(len2), l.size(0)).fill_(self.params.pad_index)
+        pos = torch.LongTensor(max(len2), l.size(0)).fill_(self.params.pad_index)
+        l1 = l.clone()
+        l2 = torch.LongTensor(len2)
+        for i in range(l.size(0)):
+            x1[:l1[i], i].copy_(torch.LongTensor(inputs[i]))
+            x2[:l2[i], i].copy_(torch.LongTensor(targets[i]))
+            y[:l2[i], i].copy_(torch.LongTensor(outputs[i]))
+            pos[:l2[i], i].copy_(torch.LongTensor(positions[i]))
+
+        pred_mask = y != self.params.pad_index
+        y = y.masked_select(pred_mask)
+        return x1, l1, x2, l2, y, pred_mask, pos
+
     def mt_step(self, lang1, lang2, lambda_coeff):
         """
         Machine translation step.
@@ -972,7 +1036,7 @@ class EncDecTrainer(Trainer):
         lang2_id = params.lang2id[lang]
         x_, len_ = self.get_batch('mass', lang)
 
-        (x1, len1, x2, len2, y, pred_mask, positions) = self.restricted_mask_sent(x_, len_, int(params.lambda_span))
+        (x1, len1, x2, len2, y, pred_mask, positions) = self.restricted_mask_sent2(x_, len_, int(params.lambda_span))
 
         langs1 = x1.clone().fill_(lang1_id)
         langs2 = x2.clone().fill_(lang2_id)

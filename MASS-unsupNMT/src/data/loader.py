@@ -116,7 +116,7 @@ def load_mono_data(params, data):
         data['mono'][lang] = {}
         data['mono_stream'][lang] = {}
 
-        for splt in ['train', 'valid', 'test']:
+        for splt in ['train', 'valid', 'test']+params.match_files.split(','):
 
             # no need to load training data for evaluation
             if splt == 'train' and params.eval_only:
@@ -339,7 +339,7 @@ def check_data_params(params):
     params.mono_dataset = {
         lang: {
             splt: os.path.join(params.data_path, '%s.%s.pth' % (splt, lang))
-            for splt in ['train', 'valid', 'test']
+            for splt in ['train', 'valid', 'test']+params.match_files.split(',')
         } for lang in params.langs if lang in required_mono
     }
     assert all([all([os.path.isfile(p) for p in paths.values()]) for paths in params.mono_dataset.values()])
